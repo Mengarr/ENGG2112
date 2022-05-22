@@ -126,7 +126,7 @@ def utc_arbitrage_sell(utc_timestamp):
 
 
 def model_battery():
-    site_df = pd.read_csv("C:/Users/Rohan/Desktop/ENG2112/TESTING/test_sites_clustered.csv")
+    site_df = pd.read_csv("C:/Users/Rohan/Desktop/ENG2112/TESTING/training_sites_clustered.csv")
     battery_sizes = [1, 0] 
     # consider depth of discharge?
     battery_sites_size = pd.DataFrame(np.zeros((site_df.shape[0], len(battery_sizes))))
@@ -169,7 +169,7 @@ def model_battery():
 def model_battery_arb():
     battery_charge_rate = 0.07 # Charge battery at 840 W/h
     battery_discharge_rate = 0.07
-    site_df = pd.read_csv("C:/Users/Rohan/Desktop/ENG2112/TESTING/test_sites_clustered.csv")
+    site_df = pd.read_csv("C:/Users/Rohan/Desktop/ENG2112/TESTING/training_sites_clustered.csv")
     battery_sizes = [0,3,5,7,10] 
     # consider depth of discharge?
     battery_sites_size = pd.DataFrame(np.zeros((site_df.shape[0], len(battery_sizes))))
@@ -224,7 +224,7 @@ def model_battery_arb():
 
 def best_battery_size():
     # Determine best battery size for each cluster
-    site_df = pd.read_csv("C:/Users/Rohan/Desktop/ENG2112/TESTING/test_sites_clustered.csv")
+    site_df = pd.read_csv("C:/Users/Rohan/Desktop/ENG2112/TESTING/training_sites_clustered.csv")
     battery_sites_size = pd.read_csv("battery_testdata.csv")
     # Cluster amount
     clusters = [0,1,2,3,4,5]
@@ -238,5 +238,65 @@ def best_battery_size():
     battery_cluster_size.to_csv('battery_cluster_vs_size.csv')
     return
 
+def model_battery_arb_test():
+    battery_charge_rate = 0.07 # Charge battery at 840 W/h
+    battery_discharge_rate = 0.07
+    site_df = pd.read_csv("C:/Users/Rohan/Desktop/ENG2112/TESTING/test_sites_clustered.csv")
+    # consider depth of discharge?
+    battery_size = 3
+    battery_sites_size = pd.DataFrame(np.zeros((site_df.shape[0], 1)))
+    # Organise by cluster...
+    for index, row in site_df.iterrows():
+        current_site_id = row["site_id"]
+        site_filename = "C:/Users/Rohan/Desktop/ENG2112/TESTING/{current_site}.csv".format(current_site = current_site_id)
+        data = pd.read_csv(site_filename)
 
-best_battery_size()
+        battery_array = np.zeros((data.shape[0],1))
+        battery_array_count = 0
+
+        battery = 0     # Battery initally starts at zero capacity
+        cost_sum = 0    # Reset cost sum after every battery size
+        for index2, row2 in data.iterrows():
+            utc_timestamp = row2[0]
+            site_state = row[2]
+            # Battery will always attempt to recharge power
+            power_sum = ((row2[1] - row2[2])/1000)*(5/60)  # Load - PV IN KWh
+            if power_sum < 0:
+                # CHARGE BATTERY
+                battery += abs(power_sum)
+                if battery > battery_size:
+                    # Feed back difference into grid. (Feed in tarrifs not dependant on time)
+                    cost_sum -= abs(utc_fit(site_state)*(battery - battery_size))
+                    battery = battery_size # Set battery to maximum size
+            else:
+                # DISCHARGE BATTERY
+                if  battery > power_sum:
+                    # Battery will discharge by power_sum amount
+                    battery -= power_sum
+                else:
+                    # Battery had small or zero amount left (but less than power_sum)
+                    # and power must be bought off the grid
+                    cost_sum += abs(utc_cost(utc_timestamp, site_state)*(power_sum - battery))
+                    battery = 0
+            if utc_arbitrage_buy(utc_timestamp ) == 1:
+                # Buy off the grid
+                if battery + battery_charge_rate < battery_size:
+                    battery +=  battery_charge_rate
+                    cost_sum += abs(utc_cost(utc_timestamp, site_state)*battery_charge_rate)
+            elif utc_arbitrage_sell(utc_timestamp) == 1:
+                # Sell to grid
+                if battery - battery_discharge_rate > 0:
+                    battery -= battery_discharge_rate
+                    cost_sum -= abs(utc_fit(site_state)*battery_discharge_rate)
+            # add cost sum to array
+            battery_array[battery_array_count] = battery
+            battery_array_count += 1
+        battery_sites_size.loc[index, 1] = cost_sum
+        data['battery'] = battery_array
+        data.to_csv("{current_site}.csv".format(current_site = current_site_id), index = False)   
+        print(current_site_id)
+    battery_sites_size.to_csv('battery_testdata.csv', index=False)
+    # Positive cost sum = bad
+    # Negative cost sum = good
+    return
+model_battery_arb_test()
